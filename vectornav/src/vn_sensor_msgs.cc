@@ -15,6 +15,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <string>
+#include <Eigen/Dense>
 
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
@@ -117,9 +118,13 @@ static void convert_to_enu(
     msg_out.linear_acceleration.y = msg_in->imu_accel.x;
     msg_out.linear_acceleration.z = -msg_in->imu_accel.z;
   }
-
-  msg_out.orientation = msg_in->quaternion;
-  msg_out.orientation.z = -msg_in->quaternion.z;
+  Eigen::AngleAxisd flip(M_PI, Eigen::Vector3d(1, 1, 0).normalized());
+  Eigen::Quaterniond q(msg_in->quaternion.w, msg_in->quaternion.x, msg_in->quaternion.y, msg_in->quaternion.z);
+  q = flip * q * flip;
+  msg_out.orientation.w = q.w();
+  msg_out.orientation.x = q.x();
+  msg_out.orientation.y = q.y();
+  msg_out.orientation.z = q.z();
 }
 
 /** Convert VN common group data to ROS2 standard message types
