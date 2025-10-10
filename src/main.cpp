@@ -157,12 +157,12 @@ int main(int argc, char * argv[])
   ros::NodeHandle n;
   ros::NodeHandle pn("~");
 
-  pubIMU = n.advertise<sensor_msgs::Imu>("vectornav/IMU", 1000);
-  pubMag = n.advertise<sensor_msgs::MagneticField>("vectornav/Mag", 1000);
+  pubIMU = n.advertise<sensor_msgs::Imu>("vectornav/imu", 1000);
+  pubMag = n.advertise<sensor_msgs::MagneticField>("vectornav/mag", 1000);
   pubGPS = n.advertise<sensor_msgs::NavSatFix>("vectornav/GPS", 1000);
-  pubOdom = n.advertise<nav_msgs::Odometry>("vectornav/Odom", 1000);
-  pubTemp = n.advertise<sensor_msgs::Temperature>("vectornav/Temp", 1000);
-  pubPres = n.advertise<sensor_msgs::FluidPressure>("vectornav/Pres", 1000);
+  pubOdom = n.advertise<nav_msgs::Odometry>("vectornav/odom", 1000);
+  pubTemp = n.advertise<sensor_msgs::Temperature>("vectornav/temp", 1000);
+  pubPres = n.advertise<sensor_msgs::FluidPressure>("vectornav/pres", 1000);
   pubIns = n.advertise<vectornav::Ins>("vectornav/INS", 1000);
 
   resetOdomSrv = n.advertiseService<std_srvs::Empty::Request, std_srvs::Empty::Response>(
@@ -277,14 +277,14 @@ int main(int argc, char * argv[])
   // calculate the least common multiple of the two rate and assure it is a
   // valid package rate, also calculate the imu and output strides
   int package_rate = 0;
-  for (int allowed_rate : {1, 2, 4, 5, 10, 20, 25, 40, 50, 100, 200, 0}) {
+  for (int allowed_rate : {1, 2, 4, 5, 10, 20, 25, 40, 50, 100, 200, 400, 800, 0}) {
     package_rate = allowed_rate;
     if ((package_rate % async_output_rate) == 0 && (package_rate % imu_output_rate) == 0) break;
   }
   ROS_ASSERT_MSG(
     package_rate,
     "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2, 4, 5, 10, 20, 25, 40, 50, 100, "
-    "200 Hz",
+    "200, 400, 800 Hz",
     imu_output_rate, async_output_rate);
   user_data.imu_stride = package_rate / imu_output_rate;
   user_data.output_stride = package_rate / async_output_rate;
@@ -300,16 +300,16 @@ int main(int argc, char * argv[])
 
   // Configure binary output message
   BinaryOutputRegister bor(
-    ASYNCMODE_PORT1,
+    ASYNCMODE_PORT2,
     SensorImuRate / package_rate,  // update rate [ms]
     COMMONGROUP_QUATERNION | COMMONGROUP_YAWPITCHROLL | COMMONGROUP_ANGULARRATE |
       COMMONGROUP_POSITION | COMMONGROUP_ACCEL | COMMONGROUP_MAGPRES |
       (user_data.adjust_ros_timestamp ? COMMONGROUP_TIMESTARTUP : 0),
-    TIMEGROUP_NONE | TIMEGROUP_GPSTOW | TIMEGROUP_GPSWEEK | TIMEGROUP_TIMEUTC, IMUGROUP_NONE,
+    TIMEGROUP_TIMEUTC, 
+    IMUGROUP_NONE,
     GPSGROUP_NONE,
-    ATTITUDEGROUP_YPRU,  //<-- returning yaw pitch roll uncertainties
-    INSGROUP_INSSTATUS | INSGROUP_POSECEF | INSGROUP_VELBODY | INSGROUP_ACCELECEF |
-      INSGROUP_VELNED | INSGROUP_POSU | INSGROUP_VELU,
+    ATTITUDEGROUP_NONE,  //<-- returning yaw pitch roll uncertainties
+    INSGROUP_NONE,
     GPSGROUP_NONE);
 
   // An empty output register for disabling output 2 and 3 if previously set
