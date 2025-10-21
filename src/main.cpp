@@ -157,13 +157,32 @@ int main(int argc, char * argv[])
   ros::NodeHandle n;
   ros::NodeHandle pn("~");
 
-  pubIMU = n.advertise<sensor_msgs::Imu>("vectornav/imu", 1000);
-  pubMag = n.advertise<sensor_msgs::MagneticField>("vectornav/mag", 1000);
-  pubGPS = n.advertise<sensor_msgs::NavSatFix>("vectornav/GPS", 1000);
-  pubOdom = n.advertise<nav_msgs::Odometry>("vectornav/odom", 1000);
-  pubTemp = n.advertise<sensor_msgs::Temperature>("vectornav/temp", 1000);
-  pubPres = n.advertise<sensor_msgs::FluidPressure>("vectornav/pres", 1000);
-  pubIns = n.advertise<vectornav::Ins>("vectornav/INS", 1000);
+  
+  enum imu_left_right
+  {
+    IMU_LEFT = 0,
+    IMU_RIGHT = 1
+  };
+
+  int SensorImuLeftRight_ = IMU_LEFT;
+  pn.param<int>("imu_left_right", SensorImuLeftRight_, (int)IMU_LEFT);
+  if (SensorImuLeftRight_ == IMU_RIGHT) {
+    ROS_INFO("Using right IMU");
+  } else {
+    ROS_INFO("Using left IMU");
+  }
+
+  std::string right_imu_tail = "_right";
+  std::string left_imu_tail = "";
+  std::string imu_tail =
+    (SensorImuLeftRight_ == IMU_RIGHT) ? right_imu_tail : left_imu_tail;
+  pubIMU = n.advertise<sensor_msgs::Imu>("vectornav/imu" + imu_tail, 1000);
+  pubMag = n.advertise<sensor_msgs::MagneticField>("vectornav/mag" + imu_tail, 1000);
+  pubGPS = n.advertise<sensor_msgs::NavSatFix>("vectornav/GPS" + imu_tail, 1000);
+  pubOdom = n.advertise<nav_msgs::Odometry>("vectornav/odom" + imu_tail, 1000);
+  pubTemp = n.advertise<sensor_msgs::Temperature>("vectornav/temp" + imu_tail, 1000);
+  pubPres = n.advertise<sensor_msgs::FluidPressure>("vectornav/pres" + imu_tail, 1000);
+  pubIns = n.advertise<vectornav::Ins>("vectornav/INS" + imu_tail, 1000);
 
   resetOdomSrv = n.advertiseService<std_srvs::Empty::Request, std_srvs::Empty::Response>(
     "reset_odom", boost::bind(&resetOdom, _1, _2, &user_data));
@@ -186,7 +205,7 @@ int main(int argc, char * argv[])
   pn.param<int>("async_output_rate", async_output_rate, 40);
   pn.param<int>("imu_output_rate", imu_output_rate, async_output_rate);
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
-  pn.param<int>("serial_baud", SensorBaudrate, 115200);
+  pn.param<int>("serial_baud", SensorBaudrate, 921600);
   pn.param<int>("fixed_imu_rate", SensorImuRate, 800);
 
   //Call to set covariances
@@ -300,7 +319,7 @@ int main(int argc, char * argv[])
 
   // Configure binary output message
   BinaryOutputRegister bor(
-    ASYNCMODE_PORT2,
+    (SensorImuLeftRight_ == IMU_LEFT) ? ASYNCMODE_PORT2 : ASYNCMODE_PORT1,
     SensorImuRate / package_rate,  // update rate [ms]
     COMMONGROUP_QUATERNION | COMMONGROUP_YAWPITCHROLL | COMMONGROUP_ANGULARRATE |
       COMMONGROUP_POSITION | COMMONGROUP_ACCEL | COMMONGROUP_MAGPRES |

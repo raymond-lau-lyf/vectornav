@@ -2,10 +2,14 @@
 <launch>
 	<arg name="frame_id" default="imu_frame"/>
 
-	<node pkg="vectornav" type="vnpub" name="vectornav" output="screen" >
-	  <param name="frame_id" value="$(arg frame_id)"/>
-      <rosparam command="load" file="$(find vectornav)/params/vn100.yaml" />
+	<node pkg="vectornav" type="vnpub" name="vectornav_left" output="screen" >
+	  <param name="frame_id" value="$(arg frame_id)_left"/>
+      <rosparam command="load" file="$(find vectornav)/params/vn100_left.yaml" />
 	</node>	
+	<!-- <node pkg="vectornav" type="vnpub" name="vectornav_right" output="screen" >
+	  <param name="frame_id" value="$(arg frame_id)_right"/>
+      <rosparam command="load" file="$(find vectornav)/params/vn100_right.yaml" />
+	</node>	 -->
 	
 </launch>
 
