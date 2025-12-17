@@ -33,6 +33,8 @@
 #include <tf2/LinearMath/Transform.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <vectornav/Ins.h>
+#include <deque>
+#include <mutex>
 
 #include "nav_msgs/Odometry.h"
 #include "ros/ros.h"
@@ -47,6 +49,13 @@ ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
 ros::ServiceServer resetOdomSrv;
 
 XmlRpc::XmlRpcValue rpc_temp;
+
+// Sliding window frame time buffer (arrival times) and its mutex
+static std::deque<ros::Time> g_frame_times;
+static std::mutex g_frame_times_mutex;
+
+// Timer callback declaration
+void display_framerate(const ros::TimerEvent & ev);
 
 // Include this header file to get access to VectorNav sensors.
 #include "vn/compositedata.h"
@@ -343,6 +352,9 @@ int main(int argc, char * argv[])
 
   // Register async callback function
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
+
+  // Create a ROS timer to display the real frame rate every 5 seconds
+  ros::Timer frame_rate_timer = n.createTimer(ros::Duration(5.0), display_framerate);
 
   // You spin me right round, baby
   // Right round like a record, baby
@@ -768,6 +780,24 @@ static ros::Time get_time_stamp(
   return (adj_time);
 }
 
+// Timer callback: compute and print frame rate over sliding 5 second window
+void display_framerate(const ros::TimerEvent & /*ev*/)
+{
+  const ros::Time now = ros::Time::now();
+  const ros::Time cutoff = now - ros::Duration(5.0);
+  unsigned long count = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_frame_times_mutex);
+    // prune old entries
+    while (!g_frame_times.empty() && g_frame_times.front() < cutoff) {
+      g_frame_times.pop_front();
+    }
+    count = static_cast<unsigned long>(g_frame_times.size());
+  }
+  double fps = static_cast<double>(count) / 5.0;
+  ROS_INFO("Real frame rate (sliding 5s): %.2f Hz (%lu samples)", fps, count);
+}
+
 //
 // Callback function to process data packet from sensor
 //
@@ -778,6 +808,16 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
 
   // evaluate time first, to have it as close to the measurement time as possible
   const ros::Time ros_time = ros::Time::now();
+
+  // Record arrival time for frame-rate calculation (sliding 5s window)
+  {
+    std::lock_guard<std::mutex> lock(g_frame_times_mutex);
+    g_frame_times.push_back(ros_time);
+    const ros::Time cutoff = ros_time - ros::Duration(5.0);
+    while (!g_frame_times.empty() && g_frame_times.front() < cutoff) {
+      g_frame_times.pop_front();
+    }
+  }
 
   vn::sensors::CompositeData cd = vn::sensors::CompositeData::parse(p);
   UserData * user_data = static_cast<UserData *>(userData);
