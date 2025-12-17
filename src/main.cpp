@@ -172,7 +172,8 @@ int main(int argc, char * argv[])
     ROS_INFO("Using left IMU");
   }
 
-  std::string right_imu_tail = "_right";
+  // std::string right_imu_tail = "_right";
+  std::string right_imu_tail = ""; // TODO
   std::string left_imu_tail = "";
   std::string imu_tail =
     (SensorImuLeftRight_ == IMU_RIGHT) ? right_imu_tail : left_imu_tail;
