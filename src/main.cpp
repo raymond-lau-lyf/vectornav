@@ -44,6 +44,8 @@
 #include "sensor_msgs/NavSatFix.h"
 #include "sensor_msgs/Temperature.h"
 #include "std_srvs/Empty.h"
+#include <std_msgs/Time.h>
+#include <atomic>
 
 ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
 ros::ServiceServer resetOdomSrv;
@@ -53,6 +55,42 @@ XmlRpc::XmlRpcValue rpc_temp;
 // Sliding window frame time buffer (arrival times) and its mutex
 static std::deque<ros::Time> g_frame_times;
 static std::mutex g_frame_times_mutex;
+
+// PTP 触发时间戳支持 - 增加线性插值
+static std::atomic<bool> g_use_ptp_trigger(false);  // 是否使用 PTP 触发时间戳
+static std::mutex g_trigger_time_mutex;
+
+// 触发时间队列（用于匹配）
+static const int TRIGGER_QUEUE_SIZE = 4;
+static std::deque<ros::Time> g_trigger_time_queue;  // 触发时间队列
+static uint64_t g_trigger_receive_count = 0;        // 接收到的触发次数
+
+// 用于线性插值的状态
+static uint32_t g_last_sync_in_cnt = 0;             // 上次的 SyncInCnt 值
+static bool g_sync_in_cnt_initialized = false;      // SyncInCnt 是否已初始化
+static ros::Time g_last_sync_ptp_time;              // 上次同步点的 PTP 时间
+static ros::Time g_current_sync_ptp_time;           // 当前同步点的 PTP 时间  
+static uint32_t g_frames_since_last_sync = 0;       // 自上次同步以来的帧数
+static const uint32_t EXPECTED_FRAMES_PER_SYNC = 32; // 预期每次同步之间的帧数 (800Hz/25Hz)
+static bool g_have_two_sync_points = false;         // 是否已有两个同步点（可以开始插值）
+
+void trigger_time_callback(const std_msgs::Time::ConstPtr& msg) {
+    std::lock_guard<std::mutex> lock(g_trigger_time_mutex);
+    g_trigger_time_queue.push_back(msg->data);
+    while (g_trigger_time_queue.size() > TRIGGER_QUEUE_SIZE) {
+        g_trigger_time_queue.pop_front();
+    }
+    g_trigger_receive_count++;
+}
+
+// 获取最新的触发时间（如果可用且有效）
+ros::Time get_latest_trigger_time() {
+    // 假设已经持有 g_trigger_time_mutex
+    if (g_trigger_time_queue.empty()) {
+        return ros::Time(0);
+    }
+    return g_trigger_time_queue.back();
+}
 
 // Timer callback declaration
 void display_framerate(const ros::TimerEvent & ev);
@@ -103,6 +141,9 @@ struct UserData
   // strides
   unsigned int imu_stride;
   unsigned int output_stride;
+  
+  // PTP trigger sync
+  bool use_ptp_trigger{false};
 };
 
 // Basic loop so we can initilize our covariance parameters above
@@ -221,6 +262,8 @@ int main(int argc, char * argv[])
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
   pn.param<int>("serial_baud", SensorBaudrate, 921600);
   pn.param<int>("fixed_imu_rate", SensorImuRate, 800);
+  pn.param<bool>("use_ptp_trigger", user_data.use_ptp_trigger, false);
+  g_use_ptp_trigger.store(user_data.use_ptp_trigger);
 
   //Call to set covariances
   if (pn.getParam("linear_accel_covariance", rpc_temp)) {
@@ -234,6 +277,13 @@ int main(int argc, char * argv[])
   }
 
   ROS_INFO("Connecting to : %s @ %d Baud", SensorPort.c_str(), SensorBaudrate);
+  
+  // Subscribe to PTP trigger time if enabled
+  ros::Subscriber sub_trigger_time;
+  if (user_data.use_ptp_trigger) {
+    sub_trigger_time = n.subscribe("/sync/trigger_time", 10, trigger_time_callback);
+    ROS_INFO("PTP trigger sync enabled, subscribed to /sync/trigger_time");
+  }
 
   // try to optimize the serial port
   optimize_serial_communication(SensorPort);
@@ -828,18 +878,99 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   UserData * user_data = static_cast<UserData *>(userData);
   ros::Time time = get_time_stamp(cd, user_data, ros_time);
 
+  // PTP trigger sync with linear interpolation
+  bool sync_in_cnt_changed = false;
+  bool using_ptp_time = false;
+  
+  if (g_use_ptp_trigger.load() && cd.hasSyncInCnt()) {
+    uint32_t current_sync_in_cnt = cd.syncInCnt();
+    std::lock_guard<std::mutex> lock(g_trigger_time_mutex);
+    
+    if (!g_sync_in_cnt_initialized) {
+      // 初始化：设置初始值
+      g_last_sync_in_cnt = current_sync_in_cnt;
+      g_sync_in_cnt_initialized = true;
+      g_frames_since_last_sync = 0;
+      
+    } else if (current_sync_in_cnt != g_last_sync_in_cnt) {
+      // SyncInCnt 变化了，这是一个同步点
+      sync_in_cnt_changed = true;
+      
+      ros::Time trigger_time = get_latest_trigger_time();
+      
+      if (trigger_time.toSec() > 0) {
+        // 更新同步点信息
+        g_last_sync_ptp_time = g_current_sync_ptp_time;
+        g_current_sync_ptp_time = trigger_time;
+        
+        if (g_last_sync_ptp_time.toSec() > 0) {
+          g_have_two_sync_points = true;
+        }
+        
+        // 同步帧直接使用 PTP 时间
+        time = trigger_time;
+        using_ptp_time = true;
+        
+        // 打印同步状态
+        static uint64_t sync_log_count = 0;
+        sync_log_count++;
+        if (sync_log_count % 25 == 0) {
+          ROS_INFO("IMU PTP sync: SyncInCnt=%u->%u, ptp_time=%u.%09u, frames_between=%u",
+                   g_last_sync_in_cnt, current_sync_in_cnt,
+                   trigger_time.sec, trigger_time.nsec, g_frames_since_last_sync);
+        }
+        
+        g_frames_since_last_sync = 0;
+      } else {
+        ROS_WARN_THROTTLE(1.0, "IMU: SyncInCnt changed but no PTP trigger available");
+      }
+      
+      g_last_sync_in_cnt = current_sync_in_cnt;
+      
+    } else {
+      // SyncInCnt 没变，这是中间帧，使用线性插值
+      g_frames_since_last_sync++;
+      
+      if (g_have_two_sync_points && g_current_sync_ptp_time.toSec() > 0) {
+        // 线性插值：T = T_current + (T_next - T_current) * (frame_index / expected_frames)
+        // 但我们不知道下一个时间点，所以用上一个间隔来估算
+        double interval = (g_current_sync_ptp_time - g_last_sync_ptp_time).toSec();
+        
+        // 确保间隔合理（约40ms = 25Hz）
+        if (interval > 0.030 && interval < 0.060) {
+          double fraction = static_cast<double>(g_frames_since_last_sync) / EXPECTED_FRAMES_PER_SYNC;
+          double interpolated_offset = interval * fraction;
+          
+          time = g_current_sync_ptp_time + ros::Duration(interpolated_offset);
+          using_ptp_time = true;
+          
+          // 偶尔打印插值状态
+          static uint64_t interp_log_count = 0;
+          interp_log_count++;
+          if (interp_log_count % 800 == 0) {  // 约每秒打印一次
+            ROS_INFO("IMU interpolation: frame=%u/%u, offset=%.3fms, interval=%.3fms",
+                     g_frames_since_last_sync, EXPECTED_FRAMES_PER_SYNC,
+                     interpolated_offset * 1000.0, interval * 1000.0);
+          }
+        }
+      }
+    }
+  }
+
   // Debug: print SyncInCount when it changes
   if ((pkg_count % user_data->imu_stride) == 0 && user_data->debug_mode && cd.hasSyncInCnt()) {
-    static uint32_t last_sync_in_cnt = 0;
+    static uint32_t debug_last_sync_in_cnt = 0;
     static unsigned long same_cnt_frames = 0;
     uint32_t current_sync_in_cnt = cd.syncInCnt();
     
-    if (current_sync_in_cnt != last_sync_in_cnt) {
+    if (current_sync_in_cnt != debug_last_sync_in_cnt) {
       std::cout << "SyncInCount: " << current_sync_in_cnt 
-                << " | PrevCount: " << last_sync_in_cnt
+                << " | PrevCount: " << debug_last_sync_in_cnt
                 << " | SameFrames: " << same_cnt_frames 
-                << " | Time: " << time << std::endl;
-      last_sync_in_cnt = current_sync_in_cnt;
+                << " | Time: " << time 
+                << " | PTP_sync: " << (sync_in_cnt_changed ? "YES" : "NO")
+                << " | using_ptp: " << (using_ptp_time ? "YES" : "NO") << std::endl;
+      debug_last_sync_in_cnt = current_sync_in_cnt;
       same_cnt_frames = 1;
     } else {
       same_cnt_frames++;

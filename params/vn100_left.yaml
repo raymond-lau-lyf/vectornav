@@ -28,6 +28,10 @@ tf_ned_to_enu: false
 
 debug_mode: true
 
+# PTP trigger sync: use PTP timestamp from MCU when SyncInCnt changes
+# Requires sync_trigger_node to be running
+use_ptp_trigger: false
+
 # If publishing ENU, do we want to publish in the frame labeled on the device? Default is false.
 # If tf_ned_to_enu = true and frame_based_enu = false orientation is reported by: x->y y->x z->-z to rotate the quaternion
 # Proper method is to rotate the quaternion by multiplication

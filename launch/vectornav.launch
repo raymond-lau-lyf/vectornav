@@ -1,16 +1,17 @@
 <?xml version="1.0"?>
 <launch>
 	<arg name="frame_id" default="imu_frame"/>
+	<arg name="use_ptp_trigger" default="false"/>
 
 	<node pkg="vectornav" type="vnpub" name="vectornav_left" output="screen" >
 	  <param name="frame_id" value="$(arg frame_id)_left"/>
+	  <param name="use_ptp_trigger" type="bool" value="$(arg use_ptp_trigger)"/>
       <rosparam command="load" file="$(find vectornav)/params/vn100_left.yaml" />
 	</node>	
 	<!-- <node pkg="vectornav" type="vnpub" name="vectornav_right" output="screen" >
 	  <param name="frame_id" value="$(arg frame_id)_right"/>
+	  <param name="use_ptp_trigger" type="bool" value="$(arg use_ptp_trigger)"/>
       <rosparam command="load" file="$(find vectornav)/params/vn100_right.yaml" />
 	</node>	 -->
 	
 </launch>
-
-
