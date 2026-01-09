@@ -97,6 +97,9 @@ struct UserData
   ros::Time ros_start_time;
   bool adjust_ros_timestamp{false};
 
+  // debug mode
+  bool debug_mode{false};
+
   // strides
   unsigned int imu_stride;
   unsigned int output_stride;
@@ -212,6 +215,7 @@ int main(int argc, char * argv[])
   pn.param<bool>("tf_ned_to_enu", user_data.tf_ned_to_enu, false);
   pn.param<bool>("frame_based_enu", user_data.frame_based_enu, false);
   pn.param<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp, false);
+  pn.param<bool>("debug_mode", user_data.debug_mode, false);
   pn.param<int>("async_output_rate", async_output_rate, 40);
   pn.param<int>("imu_output_rate", imu_output_rate, async_output_rate);
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
@@ -333,6 +337,7 @@ int main(int argc, char * argv[])
     SensorImuRate / package_rate,  // update rate [ms]
     COMMONGROUP_QUATERNION | COMMONGROUP_YAWPITCHROLL | COMMONGROUP_ANGULARRATE |
       COMMONGROUP_POSITION | COMMONGROUP_ACCEL | COMMONGROUP_MAGPRES |
+      COMMONGROUP_SYNCINCNT |
       (user_data.adjust_ros_timestamp ? COMMONGROUP_TIMESTARTUP : 0),
     TIMEGROUP_TIMEUTC, 
     IMUGROUP_NONE,
@@ -822,6 +827,24 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   vn::sensors::CompositeData cd = vn::sensors::CompositeData::parse(p);
   UserData * user_data = static_cast<UserData *>(userData);
   ros::Time time = get_time_stamp(cd, user_data, ros_time);
+
+  // Debug: print SyncInCount when it changes
+  if ((pkg_count % user_data->imu_stride) == 0 && user_data->debug_mode && cd.hasSyncInCnt()) {
+    static uint32_t last_sync_in_cnt = 0;
+    static unsigned long same_cnt_frames = 0;
+    uint32_t current_sync_in_cnt = cd.syncInCnt();
+    
+    if (current_sync_in_cnt != last_sync_in_cnt) {
+      std::cout << "SyncInCount: " << current_sync_in_cnt 
+                << " | PrevCount: " << last_sync_in_cnt
+                << " | SameFrames: " << same_cnt_frames 
+                << " | Time: " << time << std::endl;
+      last_sync_in_cnt = current_sync_in_cnt;
+      same_cnt_frames = 1;
+    } else {
+      same_cnt_frames++;
+    }
+  }
 
   // IMU
   if ((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) {
