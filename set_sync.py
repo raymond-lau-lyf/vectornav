@@ -2,7 +2,7 @@ import serial
 import time
 
 # 目标串口和波特率
-PORT = "/dev/ttyACM0"
+PORT = "/dev/ttyACM2"
 BAUD = 921600
 
 # 定义命令（每条都是以 0xAB 开头的 binary 命令）
