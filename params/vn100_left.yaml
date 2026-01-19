@@ -1,7 +1,7 @@
 # Defined in udev rules, change according to your system. Typically /dev/ttyUSB0
 serial_port: /dev/ttyTHS1
 imu_left_right: 0
-serial_port: /dev/ttyACM2
+serial_port: /dev/ttyACM1
 # serial_port: /dev/ttyVN100
 # serial_port: /dev/ttyUSB0
 
