@@ -9,7 +9,8 @@ BAUD = 921600
 cmds = [
     b'\xAB\x06\x00\x00\x00\x01',       # Set AsyncDataOutputType = 1 (IMU data only)
     b'\xAB\x07\x00\x00\x03\x20',       # Set AsyncDataOutputFreq = 800 (0x0320)
-    b'\xAB\x20\x00\x00\x00\x03',       # Set SyncInMode = 3 (COUNT)
+    b'\xAB\x20\x00\x00\x00\x03',       # Set SyncInMode = 3 (COUNT) TODO
+    # b'\xAB\x20\x00\x00\x00\x05',       # Set SyncInMode = 5 (ASYNC) TODO
     b'\xAB\x21\x00\x00\x00\x00',       # Set SyncInEdge = 0 (RISING)
     b'\xAB\x1E\x00\x00\x00\x01',       # Set SerialAsyncOutputFields = 1 (SyncInCount only)
     b'\xAB\x05\x00\x00\x00\x01',       # Set Communication Protocol to Binary
